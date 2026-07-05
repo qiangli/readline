@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ergochat/readline/internal/platform"
 	"github.com/ergochat/readline/internal/runes"
@@ -14,6 +15,14 @@ var (
 	ErrInterrupt = errors.New("Interrupt")
 )
 
+// dsrProbeTimeout bounds how long we wait for a terminal's cursor-position
+// (DSR/CPR) response before deciding the terminal does not answer. Real
+// terminals reply within a few milliseconds even over a network link; a
+// pty with no responder on the other end (e.g. an `expect` session driving
+// the shell) would otherwise leave the query — and therefore the prompt —
+// blocked forever.
+const dsrProbeTimeout = 500 * time.Millisecond
+
 type operation struct {
 	m       sync.Mutex
 	t       *terminal
@@ -22,6 +31,11 @@ type operation struct {
 	wrapErr atomic.Pointer[wrapWriter]
 
 	isPrompting bool // true when prompt written and waiting for input
+
+	// dsrUnsupported is set once a cursor-position (DSR) query times out,
+	// so we stop probing a terminal that does not answer — avoiding a
+	// per-prompt delay and a late CPR response arriving as input garbage.
+	dsrUnsupported bool
 
 	history   *opHistory
 	search    *opSearch
@@ -418,8 +432,17 @@ func (o *operation) Runes() ([]rune, error) {
 	o.isPrompting = true
 	// Query cursor position before printing the prompt as there
 	// may be existing text on the same line that ideally we don't
-	// want to overwrite and cause prompt to jump left.
-	o.getAndSetOffset(nil)
+	// want to overwrite and cause prompt to jump left. Bound the query
+	// with a deadline so a non-responding terminal (e.g. an `expect` pty)
+	// can't block the prompt forever; after one timeout, stop probing.
+	if !o.dsrUnsupported {
+		deadline := make(chan struct{})
+		timer := time.AfterFunc(dsrProbeTimeout, func() { close(deadline) })
+		if o.getAndSetOffset(deadline) {
+			o.dsrUnsupported = true
+		}
+		timer.Stop()
+	}
 	o.buf.Print() // print prompt & buffer contents
 	// Prompt written safely, unlock until read completes and then
 	// lock again to unset.
@@ -439,9 +462,12 @@ func (o *operation) Runes() ([]rune, error) {
 	return o.readline(nil)
 }
 
-func (o *operation) getAndSetOffset(deadline chan struct{}) {
+// getAndSetOffset queries the terminal cursor position and records it.
+// It reports whether the query hit its deadline (the terminal did not
+// answer), so the caller can stop probing an unresponsive terminal.
+func (o *operation) getAndSetOffset(deadline chan struct{}) (timedOut bool) {
 	if !o.GetConfig().isInteractive {
-		return
+		return false
 	}
 
 	// Handle lineedge cases where existing text before before
@@ -451,9 +477,12 @@ func (o *operation) getAndSetOffset(deadline chan struct{}) {
 	// TODO ???
 	o.t.Write([]byte(" \b"))
 
-	if offset, err := o.t.GetCursorPosition(deadline); err == nil {
+	offset, err := o.t.GetCursorPosition(deadline)
+	if err == nil {
 		o.buf.SetOffset(offset)
+		return false
 	}
+	return err == deadlineExceeded
 }
 
 func (o *operation) GenPasswordConfig() *Config {
