@@ -1,8 +1,8 @@
-.PHONY: all test examples ci gofmt
+.PHONY: all test examples ci gofmt fmtcheck hooks
 
 all: ci
 
-ci: test examples
+ci: fmtcheck test examples
 
 test:
 	go test -race ./...
@@ -16,3 +16,10 @@ examples:
 
 gofmt:
 	./.check-gofmt.sh --fix
+
+fmtcheck:  ## gofmt gate — reports unformatted files, never rewrites them
+	@./scripts/fmtcheck.sh
+
+hooks:  ## install the pre-push formatting gate
+	@git config core.hooksPath scripts/hooks
+	@echo "hooks installed: core.hooksPath=scripts/hooks"
