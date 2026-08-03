@@ -258,10 +258,15 @@ func (o *operation) readline(deadline chan struct{}) ([]rune, error) {
 				o.buf.Refresh(nil)
 			}
 			o.buf.MoveToLineEnd()
-			var data []rune
-			o.buf.WriteRune('\n')
-			data = o.buf.Reset()
-			data = data[:len(data)-1] // trim \n
+			// Enter ends the terminal's echoed input line; it is not part of
+			// the editable buffer returned to the caller. Writing it through
+			// runeBuffer used to emit LF plus the line-edge "space/backspace"
+			// workaround. Callers then had to append CR, producing LF-SP-BS-CR
+			// rather than the CRLF a terminal (and GNU readline) exposes to a
+			// PTY peer. Emit the terminal line ending directly and reset the
+			// unchanged command buffer.
+			o.t.Write([]byte("\r\n"))
+			data := o.buf.Reset()
 			result = data
 			if !o.GetConfig().DisableAutoSaveHistory {
 				// ignore IO error
