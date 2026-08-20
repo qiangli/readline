@@ -20,9 +20,6 @@ const (
 	dsrTimeout = 250 * time.Millisecond
 
 	maxAnsiLen = 32
-
-	// how many non-CPR reads to buffer while waiting for a CPR response
-	maxCPRBufferLen = 128 * 1024
 )
 
 var (
@@ -64,8 +61,9 @@ Accordingly, the concurrency design is as follows:
 2. The read methods ("internal public API") GetRune() and GetCursorPosition()
    are not concurrency-safe and must be called in serial. They are backed by
    readFromStdin, which wakes ioloop() if necessary and waits for a response.
-   If GetCursorPosition() reads non-CPR data, it will buffer it for GetRune()
-   to read later.
+   If GetCursorPosition() reads non-CPR data, it buffers that rune for
+   GetRune() and abandons the query so it cannot leave a read armed while a
+   foreground program owns stdin.
 3. Close() can be called asynchronously. It interrupts ioloop() (unless ioloop()
    is actually reading from stdin, in which case it interrupts it after the next
    keystroke), and also interrupts any in-progress GetRune() call. If
@@ -194,11 +192,13 @@ func (t *terminal) GetCursorPosition(deadline chan struct{}) (cursorPosition, er
 			return cursorPosition{-1, -1}, err
 		}
 		if result.ok {
-			// non-CPR input, save it to be read later:
+			// User input won the race with the CPR response. Preserve the
+			// rune for Readline, but stop probing immediately. Continuing the
+			// query would arm one more blocking stdin read after an Enter rune;
+			// that read can outlive Readline and steal input from the foreground
+			// program which runs next.
 			t.buffer = append(t.buffer, result.r)
-			if len(t.buffer) > maxCPRBufferLen {
-				panic("did not receive DSR CPR response")
-			}
+			return cursorPosition{-1, -1}, invalidCPR
 		}
 		if result.pos != nil {
 			return *result.pos, nil

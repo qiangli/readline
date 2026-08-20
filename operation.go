@@ -487,7 +487,11 @@ func (o *operation) getAndSetOffset(deadline chan struct{}) (timedOut bool) {
 		o.buf.SetOffset(offset)
 		return false
 	}
-	return err == deadlineExceeded
+	// Input arriving before a CPR response means the terminal cannot safely
+	// answer this query while the user is typing. Disable later probes just as
+	// we do after a timeout; retrying on every prompt would keep interposing a
+	// background read between the shell and its foreground command.
+	return err == deadlineExceeded || err == invalidCPR
 }
 
 func (o *operation) GenPasswordConfig() *Config {
