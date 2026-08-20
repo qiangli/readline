@@ -333,7 +333,13 @@ func (t *terminal) consumeANSIEscape(buf *bufio.Reader, ansiBuf *bytes.Buffer) (
 		// right now the only cases we want to handle are the arrow keys:
 		return consumeAltSequence(buf)
 	default:
-		return // invalid, ignore
+		// A bare Escape switches vi insert mode to command mode. The next
+		// ordinary key belongs to vi, rather than forming an ANSI sequence;
+		// put it back so the next GetRune call can consume it normally.
+		if err := buf.UnreadRune(); err != nil {
+			return result, err
+		}
+		return readResult{r: CharEsc, ok: true}, nil
 	}
 
 	// data consists of ; and 0-9 , anything else terminates the sequence

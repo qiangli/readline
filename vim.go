@@ -123,6 +123,31 @@ func (o *opVim) handleVimNormalEnterInsert(r rune, readNext func() rune) (t rune
 }
 
 func (o *opVim) HandleVimNormal(r rune, readNext func() rune) (t rune) {
+	if '1' <= r && r <= '9' {
+		limit := o.op.buf.Len() + 1
+		count := int(r - '0')
+		if count > limit {
+			count = limit
+		}
+		for {
+			r = readNext()
+			if r < '0' || '9' < r {
+				break
+			}
+			if count < limit {
+				count = count*10 + int(r-'0')
+				if count > limit {
+					count = limit
+				}
+			}
+		}
+		if o.handleVimCountedMotion(r, count) {
+			return 0
+		}
+		o.op.t.Bell()
+		return 0
+	}
+
 	switch r {
 	case CharEnter, CharInterrupt:
 		o.vimMode = vim_INSERT // ???
@@ -146,6 +171,27 @@ func (o *opVim) HandleVimNormal(r rune, readNext func() rune) (t rune) {
 	// invalid operation
 	o.op.t.Bell()
 	return 0
+}
+
+func (o *opVim) handleVimCountedMotion(r rune, count int) bool {
+	rb := o.op.buf
+	for i := 0; i < count; i++ {
+		switch r {
+		case 'h':
+			rb.MoveBackward()
+		case 'l':
+			rb.MoveForward()
+		case 'b', 'B':
+			rb.MoveToPrevWord()
+		case 'w', 'W':
+			rb.MoveToNextWord()
+		case 'e', 'E':
+			rb.MoveToEndWord()
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // vimEditorCommand returns the editor `v` should invoke, per POSIX bash:
