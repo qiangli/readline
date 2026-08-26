@@ -60,6 +60,13 @@ type Config struct {
 	// Ctrl+_ will undo the previous action).
 	Undo bool
 
+	// DisableCursorPositionQuery disables the cursor-position (DSR/CPR) probe
+	// that is otherwise sent before the first prompt to detect existing text
+	// on the current line. Set this for clients whose terminal (real or
+	// emulated) does not answer DSR queries, to skip the probe and its
+	// startup bytes entirely rather than waiting out the probe timeout.
+	DisableCursorPositionQuery bool
+
 	// These fields allow customizing terminal handling. Most clients should ignore them.
 	Stdin              io.Reader
 	Stdout             io.Writer
