@@ -440,7 +440,7 @@ func (o *operation) Runes() ([]rune, error) {
 	// want to overwrite and cause prompt to jump left. Bound the query
 	// with a deadline so a non-responding terminal (e.g. an `expect` pty)
 	// can't block the prompt forever; after one timeout, stop probing.
-	if !o.dsrUnsupported {
+	if !o.dsrUnsupported && !cfg.DisableCursorPositionQuery {
 		deadline := make(chan struct{})
 		timer := time.AfterFunc(dsrProbeTimeout, func() { close(deadline) })
 		if o.getAndSetOffset(deadline) {
