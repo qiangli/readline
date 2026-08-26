@@ -497,10 +497,11 @@ func (o *operation) getAndSetOffset(deadline chan struct{}) (timedOut bool) {
 func (o *operation) GenPasswordConfig() *Config {
 	baseConfig := o.GetConfig()
 	return &Config{
-		EnableMask:      true,
-		InterruptPrompt: "\n",
-		EOFPrompt:       "\n",
-		HistoryLimit:    -1,
+		EnableMask:                 true,
+		InterruptPrompt:            "\n",
+		EOFPrompt:                  "\n",
+		HistoryLimit:               -1,
+		DisableCursorPositionQuery: baseConfig.DisableCursorPositionQuery,
 
 		Stdin:  baseConfig.Stdin,
 		Stdout: baseConfig.Stdout,

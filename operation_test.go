@@ -71,3 +71,25 @@ func TestCursorPositionQueryEnabledByDefault(t *testing.T) {
 		t.Fatalf("default config: output missing probe padding bytes: %q", out)
 	}
 }
+
+func TestPasswordConfigPreservesDisabledCursorPositionQuery(t *testing.T) {
+	cfg := &Config{
+		Stdin:                      strings.NewReader("\n"),
+		Stdout:                     &bytes.Buffer{},
+		Stderr:                     &bytes.Buffer{},
+		FuncGetSize:                func() (int, int) { return 80, 24 },
+		FuncIsTerminal:             func() bool { return true },
+		DisableCursorPositionQuery: true,
+	}
+	if err := cfg.init(); err != nil {
+		t.Fatal(err)
+	}
+	rl, err := NewFromConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rl.Close()
+	if got := rl.GeneratePasswordConfig().DisableCursorPositionQuery; !got {
+		t.Fatal("password config re-enabled the cursor-position query")
+	}
+}
