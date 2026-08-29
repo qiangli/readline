@@ -3,6 +3,7 @@ package readline
 import (
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,5 +71,57 @@ func TestCursorPositionStopsReadingAtUserInput(t *testing.T) {
 	}
 	if r != 'x' {
 		t.Fatalf("buffered rune = %q, want x", r)
+	}
+}
+
+func TestTerminalDoesNotReadAheadPastSubmittedLine(t *testing.T) {
+	stdin := strings.NewReader("shell\neditor\n")
+	cfg := &Config{Stdin: stdin, Stdout: io.Discard, Stderr: io.Discard}
+	if err := cfg.init(); err != nil {
+		t.Fatal(err)
+	}
+	term, err := newTerminal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+
+	for _, want := range "shell\n" {
+		got, err := term.GetRune(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("terminal rune = %q, want %q", got, want)
+		}
+	}
+
+	// Once readline has accepted the shell command, the foreground command
+	// owns stdin. Its editor input must still be present in the shared reader.
+	rest, err := io.ReadAll(stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(rest), "editor\n"; got != want {
+		t.Fatalf("foreground input = %q, want %q", got, want)
+	}
+}
+
+func TestExactRuneReaderUTF8AndUnread(t *testing.T) {
+	r := &exactRuneReader{r: strings.NewReader("éx")}
+	got, size, err := r.ReadRune()
+	if err != nil || got != 'é' || size != 2 {
+		t.Fatalf("first rune = %q size=%d err=%v", got, size, err)
+	}
+	if err := r.UnreadRune(); err != nil {
+		t.Fatal(err)
+	}
+	got, size, err = r.ReadRune()
+	if err != nil || got != 'é' || size != 2 {
+		t.Fatalf("unread rune = %q size=%d err=%v", got, size, err)
+	}
+	got, size, err = r.ReadRune()
+	if err != nil || got != 'x' || size != 1 {
+		t.Fatalf("final rune = %q size=%d err=%v", got, size, err)
 	}
 }

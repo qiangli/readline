@@ -1,7 +1,6 @@
 package readline
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ergochat/readline/internal/ansi"
 	"github.com/ergochat/readline/internal/platform"
@@ -109,6 +109,67 @@ type readResult struct {
 	// other data that can be conveyed in a single read operation;
 	// currently only the CPR:
 	pos *cursorPosition
+}
+
+// runeScanner is the narrow input contract used by the ANSI decoder. Keeping
+// it independent of bufio.Reader is important: a buffered reader may pull
+// bytes past the submitted newline into its private buffer. Between Readline
+// calls those bytes belong to the foreground program (for example the editor
+// launched by fc), not to readline.
+type runeScanner interface {
+	ReadRune() (rune, int, error)
+	UnreadRune() error
+}
+
+// exactRuneReader decodes one UTF-8 rune while asking the underlying reader
+// for exactly one byte at a time. Terminal input is latency-bound rather than
+// throughput-bound, and avoiding read-ahead preserves the ownership boundary
+// between readline and a foreground program sharing the terminal.
+type exactRuneReader struct {
+	r         io.Reader
+	last      rune
+	lastSize  int
+	canUnread bool
+	pending   bool
+}
+
+func (r *exactRuneReader) ReadRune() (rune, int, error) {
+	if r.pending {
+		r.pending = false
+		r.canUnread = true
+		return r.last, r.lastSize, nil
+	}
+
+	var encoded [utf8.UTFMax]byte
+	for n := 0; n < len(encoded); {
+		read, err := r.r.Read(encoded[n : n+1])
+		if read == 0 {
+			if err == nil {
+				continue
+			}
+			return 0, 0, err
+		}
+		n += read
+		buf := encoded[:n]
+		if utf8.FullRune(buf) {
+			rn, size := utf8.DecodeRune(buf)
+			r.last, r.lastSize, r.canUnread = rn, size, true
+			return rn, size, nil
+		}
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	return utf8.RuneError, 1, nil
+}
+
+func (r *exactRuneReader) UnreadRune() error {
+	if !r.canUnread || r.pending {
+		return errors.New("readline: invalid UnreadRune")
+	}
+	r.canUnread = false
+	r.pending = true
+	return nil
 }
 
 func newTerminal(cfg *Config) (*terminal, error) {
@@ -275,7 +336,7 @@ func (t *terminal) ioloop() {
 	// ensure close if we get an error from stdio
 	defer t.Close()
 
-	buf := bufio.NewReader(t.GetConfig().Stdin)
+	buf := &exactRuneReader{r: t.GetConfig().Stdin}
 	var ansiBuf bytes.Buffer
 
 	for {
@@ -310,7 +371,7 @@ func (t *terminal) ioloop() {
 	}
 }
 
-func (t *terminal) consumeANSIEscape(buf *bufio.Reader, ansiBuf *bytes.Buffer) (result readResult, err error) {
+func (t *terminal) consumeANSIEscape(buf runeScanner, ansiBuf *bytes.Buffer) (result readResult, err error) {
 	ansiBuf.Reset()
 	initial, _, err := buf.ReadRune()
 	if err != nil {
@@ -410,7 +471,7 @@ func (t *terminal) consumeANSIEscape(buf *bufio.Reader, ansiBuf *bytes.Buffer) (
 	return // default: no interpretable rune value
 }
 
-func consumeAltSequence(buf *bufio.Reader) (result readResult, err error) {
+func consumeAltSequence(buf runeScanner) (result readResult, err error) {
 	initial, _, err := buf.ReadRune()
 	if err != nil {
 		return
