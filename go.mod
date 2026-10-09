@@ -1,6 +1,8 @@
 module github.com/ergochat/readline
 
-go 1.19
+go 1.27
+
+toolchain go1.27.1
 
 require (
 	golang.org/x/sys v0.15.0
